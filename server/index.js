@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const localtunnel = require('localtunnel');
+const { spawn } = require('child_process');
 const axios = require('axios');
 
 const app = express();
@@ -34,21 +34,32 @@ function generateShortCode() {
 }
 
 async function startTunnel() {
-  try {
-    const tunnel = await localtunnel({ port: PORT });
-    tunnelUrl = tunnel.url;
-    shortCode = generateShortCode();
-    codeMap.set(shortCode, tunnelUrl);
+  console.log('Starting Pinggy SSH Tunnel...');
+  // ssh -p 443 -R0:localhost:8080 a.pinggy.io
+  const ssh = spawn('ssh', ['-o', 'StrictHostKeyChecking=no', '-p', '443', '-R0:localhost:' + PORT, 'a.pinggy.io']);
 
-    console.log(`Public URL: ${tunnelUrl}`);
-    console.log(`Easy Code: ${shortCode}`);
+  ssh.stdout.on('data', (data) => {
+    const output = data.toString();
+    console.log('SSH Output:', output);
 
-    tunnel.on('close', () => {
-      console.log('Tunnel closed');
-    });
-  } catch (err) {
-    console.error('Error starting localtunnel:', err);
-  }
+    // Extract https URL from Pinggy output
+    const match = output.match(/https:\/\/[a-z0-9-]+\.pinggy\.link/);
+    if (match) {
+        tunnelUrl = match[0];
+        shortCode = generateShortCode();
+        codeMap.set(shortCode, tunnelUrl);
+        console.log(`\n🚀 TUNNEL ACTIVE: ${tunnelUrl}`);
+        console.log(`🔑 EASY CODE: ${shortCode}\n`);
+    }
+  });
+
+  ssh.stderr.on('data', (data) => {
+    console.error(`SSH Error: ${data}`);
+  });
+
+  ssh.on('close', (code) => {
+    console.log(`SSH Tunnel closed with code ${code}`);
+  });
 }
 
 // Cloudflare API integration (Placeholder)
@@ -63,7 +74,32 @@ async function updateCloudflareDNS(domain, tunnelUrl) {
 
     try {
         console.log(`Updating Cloudflare DNS for ${domain} to point to ${tunnelUrl}`);
-        // Implementation would use axios.put to Cloudflare API
+
+        // 1. Get Record ID for the domain
+        const recordsRes = await axios.get(
+            `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${domain}`,
+            { headers: { 'Authorization': `Bearer ${CF_API_TOKEN}` } }
+        );
+
+        const record = recordsRes.data.result[0];
+        const tunnelHostname = new URL(tunnelUrl).hostname;
+
+        if (record) {
+            // Update existing record
+            await axios.put(
+                `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${record.id}`,
+                { type: 'CNAME', name: domain, content: tunnelHostname, proxied: true },
+                { headers: { 'Authorization': `Bearer ${CF_API_TOKEN}` } }
+            );
+        } else {
+            // Create new record
+            await axios.post(
+                `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records`,
+                { type: 'CNAME', name: domain, content: tunnelHostname, proxied: true },
+                { headers: { 'Authorization': `Bearer ${CF_API_TOKEN}` } }
+            );
+        }
+        console.log(`Cloudflare DNS successfully updated for ${domain}`);
     } catch (err) {
         console.error('Error updating Cloudflare DNS:', err);
     }

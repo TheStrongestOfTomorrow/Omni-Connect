@@ -31,6 +31,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('group');
   const [targetUuid, setTargetUuid] = useState('');
   const [code, setCode] = useState('');
+  const [customDomain, setCustomDomain] = useState('');
   const [users, setUsers] = useState({});
   const [peer, setPeer] = useState(null);
   const [showMedia, setShowMedia] = useState(false);
@@ -55,12 +56,16 @@ function App() {
             try {
                 // If it looks like a code (2 chars, dash, 3 chars), handle as code
                 if (/^[A-Z0-9]{2}-[A-Z0-9]{3}$/.test(hostParam.toUpperCase())) {
-                    const res = await fetch(`http://localhost:8080/lookup/${hostParam.toUpperCase()}`);
+                    const res = await fetch(`http://localhost:8080/lookup/${hostParam.toUpperCase()}`, {
+                        headers: { "bypass-tunnel-reminder": "true" }
+                    });
                     const data = await res.json();
                     if (data.url) handleJoin(data.url);
                 } else {
                     // Otherwise assume it's a custom domain/host from signaling server
-                    const res = await fetch(`http://localhost:8080/resolve-domain?host=${hostParam}`);
+                    const res = await fetch(`http://localhost:8080/resolve-domain?host=${hostParam}`, {
+                        headers: { "bypass-tunnel-reminder": "true" }
+                    });
                     const data = await res.json();
                     if (data.url) {
                         window.location.replace(data.url); // Immediate redirect to active tunnel
@@ -122,7 +127,9 @@ function App() {
   const handleLookup = async () => {
       if (!code) return;
       try {
-          const res = await fetch(`http://localhost:8080/lookup/${code}`);
+          const res = await fetch(`http://localhost:8080/lookup/${code}`, {
+              headers: { "bypass-tunnel-reminder": "true" }
+          });
           const data = await res.json();
           if (data.url) {
               handleJoin(data.url);
@@ -222,6 +229,24 @@ function App() {
                     placeholder="Enter 6-digit code (e.g. Z9-X21)"
                 />
                 <button onClick={handleLookup}>Connect by Code</button>
+            </div>
+            <div className="divider">OR</div>
+            <div className="domain-input">
+                <input
+                    type="text"
+                    value={customDomain}
+                    onChange={(e) => setCustomDomain(e.target.value)}
+                    placeholder="Go Live with Custom Domain"
+                />
+                <button onClick={async () => {
+                    if (!customDomain) return;
+                    await fetch('http://localhost:8080/domain/heartbeat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ domain: customDomain, tunnelUrl: 'http://localhost:8080' }) // In real usage, use active tunnel
+                    });
+                    alert('Custom domain live! Redirecting...');
+                }}>Go Live</button>
             </div>
           </div>
         </div>
