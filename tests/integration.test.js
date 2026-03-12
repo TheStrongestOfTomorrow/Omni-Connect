@@ -118,4 +118,23 @@ describe('Omni-Connect Integration Tests', () => {
           }, 100);
       }, 100);
   });
+
+  it('should redact sensitive information in messages', (done) => {
+    const { redactSensitiveInfo } = require('../client/src/utils/privacy');
+    const input = 'Call me at +1 234 567 8901 or visit Street 123';
+    const redacted = redactSensitiveInfo(input);
+    expect(redacted).to.include('[🔒 PROTECTED PHONE]');
+    expect(redacted).to.include('[🔒 PROTECTED ADDRESS]');
+    done();
+  });
+
+  it('should broadcast media-sync events', (done) => {
+      const syncData = { videoId: 'test', time: 10, state: 1 };
+      client2.on('media-sync', (data) => {
+          expect(data.videoId).to.equal(syncData.videoId);
+          expect(data.time).to.equal(syncData.time);
+          done();
+      });
+      client1.emit('media-sync', syncData);
+  });
 });

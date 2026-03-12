@@ -2,7 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import * as socketService from './socket';
-import { Send, User, MessageCircle, Shield } from 'lucide-react';
+import { Send, User, MessageCircle, Shield, Video, Music } from 'lucide-react';
+import Peer from 'peerjs';
+import StreamHandler from './components/StreamHandler';
+import YouTubeSync from './components/YouTubeSync';
+import { useVoiceRecorder } from './hooks/useVoiceRecorder';
+import AudioPlayer from './components/AudioPlayer';
+import { redactSensitiveInfo, stripExifAndRedraw } from './utils/privacy';
+import ImagePreview from './components/ImagePreview';
+import { Camera, FileUp } from 'lucide-react';
+import { sendFile, CHUNK_SIZE } from './utils/p2p';
 import './App.css';
 
 function App() {
@@ -18,16 +27,50 @@ function App() {
   const [isJoined, setIsJoined] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputMsg, setInputMsg] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('group');
   const [targetUuid, setTargetUuid] = useState('');
   const [code, setCode] = useState('');
   const [users, setUsers] = useState({});
+  const [peer, setPeer] = useState(null);
+  const [showMedia, setShowMedia] = useState(false);
+  const [showYoutube, setShowYoutube] = useState(false);
+  const { isRecording, startRecording, stopRecording } = useVoiceRecorder();
+
+  useEffect(() => {
+    if (isJoined) {
+      const newPeer = new Peer(uuid);
+      setPeer(newPeer);
+      return () => newPeer.destroy();
+    }
+  }, [isJoined, uuid]);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const hostUrl = urlParams.get('host');
-    if (hostUrl && name) {
-      handleJoin(hostUrl);
+    const hostParam = urlParams.get('host');
+
+    if (hostParam) {
+        // Switchboard Redirector Logic
+        const resolveHost = async () => {
+            try {
+                // If it looks like a code (2 chars, dash, 3 chars), handle as code
+                if (/^[A-Z0-9]{2}-[A-Z0-9]{3}$/.test(hostParam.toUpperCase())) {
+                    const res = await fetch(`http://localhost:8080/lookup/${hostParam.toUpperCase()}`);
+                    const data = await res.json();
+                    if (data.url) handleJoin(data.url);
+                } else {
+                    // Otherwise assume it's a custom domain/host from signaling server
+                    const res = await fetch(`http://localhost:8080/resolve-domain?host=${hostParam}`);
+                    const data = await res.json();
+                    if (data.url) {
+                        window.location.replace(data.url); // Immediate redirect to active tunnel
+                    }
+                }
+            } catch (err) {
+                console.error('Redirect error:', err);
+            }
+        };
+        resolveHost();
     }
   }, []);
 
@@ -91,16 +134,68 @@ function App() {
       }
   };
 
+  const sendVoiceMessage = async () => {
+    const blob = await stopRecording();
+    const mediaKey = uuidv4();
+    await db.media.add({ id: mediaKey, blob, type: 'audio' });
+
+    const msgData = { mediaKey, from: name, fromUuid: uuid, timestamp: Date.now() };
+    if (activeTab === 'group') {
+        socketService.sendGroupMessage(msgData);
+    } else {
+        socketService.sendPrivateMessage(targetUuid, msgData);
+    }
+  };
+
   const sendMessage = (e) => {
     e.preventDefault();
     if (!inputMsg.trim()) return;
 
+    const redactedText = redactSensitiveInfo(inputMsg);
+
     if (activeTab === 'group') {
-      socketService.sendGroupMessage(inputMsg);
+      socketService.sendGroupMessage({ text: redactedText });
     } else if (targetUuid) {
-      socketService.sendPrivateMessage(targetUuid, inputMsg);
+      socketService.sendPrivateMessage(targetUuid, { text: redactedText });
     }
     setInputMsg('');
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024 && peer && targetUuid) {
+        // P2P for > 5MB
+        const conn = peer.connect(targetUuid);
+        conn.on('open', () => {
+            sendFile(conn, file);
+        });
+    } else {
+        // Fallback or smaller files - for simplicity we just handle as media for now
+        const mediaKey = uuidv4();
+        await db.media.add({ id: mediaKey, blob: file, type: 'file' });
+        const msgData = { mediaKey, from: name, fromUuid: uuid, timestamp: Date.now(), isFile: true, fileName: file.name };
+        if (activeTab === 'group') socketService.sendGroupMessage(msgData);
+        else socketService.sendPrivateMessage(targetUuid, msgData);
+    }
+  };
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    const cleanBlob = await stripExifAndRedraw(file);
+    const mediaKey = uuidv4();
+    await db.media.add({ id: mediaKey, blob: cleanBlob, type: 'image' });
+
+    const msgData = { mediaKey, from: name, fromUuid: uuid, timestamp: Date.now(), isImage: true };
+    if (activeTab === 'group') {
+        socketService.sendGroupMessage(msgData);
+    } else {
+        socketService.sendPrivateMessage(targetUuid, msgData);
+    }
+    setUploading(false);
   };
 
   if (!isJoined) {
@@ -138,6 +233,10 @@ function App() {
     <div className="chat-app">
       <header>
         <div className="brand">Omni-Connect</div>
+        <div className="header-actions">
+          <button onClick={() => setShowMedia(!showMedia)}><Video size={18} /></button>
+          <button onClick={() => setShowYoutube(!showYoutube)}><Music size={18} /></button>
+        </div>
         <div className="user-info">
           <User size={18} />
           <span>{name}</span>
@@ -172,6 +271,8 @@ function App() {
         </aside>
 
         <main className="chat-area">
+          {showMedia && <StreamHandler peer={peer} targetUuid={activeTab === 'private' ? targetUuid : null} isHost={true} />}
+          {showYoutube && <YouTubeSync socket={socketService.getSocket()} isHost={true} />}
           <div className="messages-list">
             {messages
               .filter(m => {
@@ -184,7 +285,25 @@ function App() {
                     <span className="sender">{m.from}</span>
                     <span className="time">{new Date(m.timestamp).toLocaleTimeString()}</span>
                   </div>
-                  <div className="text">{m.text}</div>
+                  <div className="text">
+                    {m.text}
+                    {m.mediaKey && (
+                        m.isImage ? <ImagePreview mediaKey={m.mediaKey} /> :
+                        m.isFile ? <a href="#" onClick={async (e) => {
+                            e.preventDefault();
+                            const mData = await db.media.get(m.mediaKey);
+                            if (mData) {
+                                const url = URL.createObjectURL(mData.blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = m.fileName;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                            }
+                        }}>{m.fileName}</a> :
+                        <AudioPlayer mediaKey={m.mediaKey} />
+                    )}
+                  </div>
                 </div>
               ))}
           </div>
@@ -196,6 +315,22 @@ function App() {
               onChange={(e) => setInputMsg(e.target.value)}
               placeholder={activeTab === 'group' ? "Message group..." : `Message ${users[targetUuid]}...`}
             />
+            <label className="upload-btn">
+                <input type="file" accept="image/*" onChange={handleImageUpload} hidden disabled={uploading} />
+                <Camera size={20} className={uploading ? 'anim-pulse' : ''} />
+            </label>
+            <label className="upload-btn">
+                <input type="file" onChange={handleFileUpload} hidden />
+                <FileUp size={20} />
+            </label>
+            <button
+                type="button"
+                onMouseDown={startRecording}
+                onMouseUp={sendVoiceMessage}
+                className={isRecording ? 'recording' : ''}
+            >
+                <Mic size={20} />
+            </button>
             <button type="submit"><Send size={20} /></button>
           </form>
         </main>
