@@ -34,7 +34,7 @@ Omni-Connect is a browser-based tool that makes **you** the server. Host a secur
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-repo/omni-connect.git
+git clone https://github.com/thestrongestoftomorrow/omni-connect.git
 cd omni-connect
 ```
 
