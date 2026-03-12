@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const localtunnel = require('localtunnel');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
@@ -20,6 +21,7 @@ let tunnelUrl = null;
 let shortCode = null;
 
 const codeMap = new Map();
+const domainMap = new Map(); // domain -> active_tunnel_url
 const sessions = new Map();
 
 function generateShortCode() {
@@ -49,6 +51,24 @@ async function startTunnel() {
   }
 }
 
+// Cloudflare API integration (Placeholder)
+async function updateCloudflareDNS(domain, tunnelUrl) {
+    const CF_API_TOKEN = process.env.CF_API_TOKEN;
+    const CF_ZONE_ID = process.env.CF_ZONE_ID;
+
+    if (!CF_API_TOKEN || !CF_ZONE_ID) {
+        console.warn('Cloudflare API Token or Zone ID missing. Skipping DNS update.');
+        return;
+    }
+
+    try {
+        console.log(`Updating Cloudflare DNS for ${domain} to point to ${tunnelUrl}`);
+        // Implementation would use axios.put to Cloudflare API
+    } catch (err) {
+        console.error('Error updating Cloudflare DNS:', err);
+    }
+}
+
 app.get('/lookup/:code', (req, res) => {
   const code = req.params.code.toUpperCase();
   const url = codeMap.get(code);
@@ -57,6 +77,23 @@ app.get('/lookup/:code', (req, res) => {
   } else {
     res.status(404).json({ error: 'Code not found' });
   }
+});
+
+app.post('/domain/heartbeat', express.json(), (req, res) => {
+    const { domain, tunnelUrl } = req.body;
+    domainMap.set(domain, tunnelUrl);
+    console.log(`Heartbeat received: ${domain} -> ${tunnelUrl}`);
+    res.sendStatus(200);
+});
+
+app.get('/resolve-domain', (req, res) => {
+    const { host } = req.query;
+    const url = domainMap.get(host);
+    if (url) {
+        res.json({ url });
+    } else {
+        res.status(404).json({ error: 'Domain not found' });
+    }
 });
 
 io.on('connection', (socket) => {
@@ -89,6 +126,10 @@ io.on('connection', (socket) => {
         session.missedMessages.push(messageData);
       }
     });
+  });
+
+  socket.on('media-sync', (data) => {
+    socket.broadcast.emit('media-sync', data);
   });
 
   socket.on('private-message', ({ toUuid, text }) => {
