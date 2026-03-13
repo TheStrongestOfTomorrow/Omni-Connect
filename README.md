@@ -1,28 +1,32 @@
-# Omni-Connect 📡
+# Omni-Connect V2: Decentralized Multimedia Hub 📡
 
 Omni-Connect is a browser-based tool that makes **you** the server. Host a secure, private group chat session directly from your browser, share a public link or a simple 6-digit code, and start chatting with your friends instantly—no installation required for them.
 
-## 🚀 Features
+## 🚀 Features (V2 Upgrade)
 
-### 📡 1. The Connection Logic
-- **Public URL Generation**: Automatically creates a public link using `localtunnel` (e.g., `https://strongest-tomorrow.loca.lt`).
-- **URL Invites**: Anyone with the link is automatically connected to your session via URL parameters.
-- **6-Digit Easy Codes**: Shows a short, human-friendly code (e.g., `Z9-X21`) that friends can type in to look up your tunnel URL and connect.
+### 📡 1. The Connection Logic (Zero-Password Overhaul)
+- **SSH Tunneling**: Replaced localtunnel with a robust SSH tunnel (Pinggy/Serveo) to bypass password/IP check blocks.
+- **Header Injection**: Automatically injects `bypass-tunnel-reminder` to skip provider landing pages.
+- **6-Digit Easy Codes**: Shows a short code (e.g., `Z9-X21`) for easy manual connection.
+- **Custom Domain "Direct-Host"**: Integrate with Cloudflare API to point your own domain directly to your active tunnel.
 
-### 👥 2. Chat & Groups
-- **The Relay**: The host acts as the "brain," broadcasting messages from any participant to the entire group instantly.
-- **Direct Messages (DMs)**: Private routing system allows "whispering" to specific users so the rest of the group doesn't see.
+### 👥 2. Multimedia & P2P
+- **WebRTC Streams**: Real-time voice, video, and screen sharing via PeerJS.
+- **Synchronized YouTube**: Embed the YouTube IFrame API and sync playback across the group.
+- **P2P File Transfer**: High-speed, direct browser-to-browser transfer for large files (>5MB) using WebRTC DataChannels.
+- **Voice Messaging**: Record and send voice notes with local Blob persistence.
 
-### 💾 3. Persistence (The "Clutch" Save)
-- **IndexedDB Storage**: Uses `Dexie.js` to save every message locally in the browser's database, bypassing the 5MB limit of `localStorage`.
-- **UUID Handshake**: Apps swap Unique IDs to recognize returning friends and instantly restore chat history.
-- **AFK Recovery**: If a friend closes their tab, the server keeps their spot "warm" for 30 minutes. If they return within that window, they are "caught up" with missed messages.
+### 💾 3. Persistence & Privacy
+- **IndexedDB Storage**: Uses `Dexie.js` for high-capacity local message and media storage.
+- **Silent Guardian (Privacy Scrubber)**: Automatic regex-based redaction of phone numbers and addresses.
+- **EXIF Metadata Stripper**: Wipes GPS coordinates and device info from images before sharing.
+- **AFK Recovery**: 30-minute session "warmth" for disconnected users.
 
 ---
 
 ## 🏗️ Tech Stack
-- **Frontend**: React (Vite), Socket.io-client, Dexie.js (IndexedDB), Lucide-React.
-- **Backend**: Node.js, Express, Socket.io, Localtunnel.
+- **Frontend**: React (Vite), Socket.io-client, Dexie.js (IndexedDB), PeerJS, YouTube IFrame API, Lucide-React.
+- **Backend**: Node.js, Express, Socket.io, Pinggy (via SSH).
 
 ---
 
