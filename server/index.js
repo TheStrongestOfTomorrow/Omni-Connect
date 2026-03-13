@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const { spawn } = require('child_process');
+const localtunnel = require('localtunnel');
 const axios = require('axios');
 
 const app = express();
@@ -34,67 +34,25 @@ function generateShortCode() {
 }
 
 async function startTunnel() {
-  console.log('Starting Pinggy SSH Tunnel...');
-  // BatchMode=yes prevents password prompts, -T disables pseudo-terminal
-  const ssh = spawn('ssh', [
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'BatchMode=yes',
-    '-p', '443',
-    '-R0:localhost:' + PORT,
-    'a.pinggy.io'
-  ]);
+  console.log('Starting Localtunnel...');
+  try {
+    const tunnel = await localtunnel({ port: PORT });
+    tunnelUrl = tunnel.url;
+    shortCode = generateShortCode();
+    codeMap.set(shortCode, tunnelUrl);
 
-  ssh.stdout.on('data', (data) => {
-    const output = data.toString();
-    console.log('SSH Output:', output);
+    console.log(`\n🚀 TUNNEL ACTIVE: ${tunnelUrl}`);
+    console.log(`🔑 EASY CODE: ${shortCode}\n`);
 
-    // Extract https URL from Pinggy output
-    const match = output.match(/https:\/\/[a-z0-9-]+\.pinggy\.link/);
-    if (match) {
-        tunnelUrl = match[0];
-        shortCode = generateShortCode();
-        codeMap.set(shortCode, tunnelUrl);
-        console.log(`\n🚀 TUNNEL ACTIVE: ${tunnelUrl}`);
-        console.log(`🔑 EASY CODE: ${shortCode}\n`);
-    }
-  });
-
-  ssh.stderr.on('data', (data) => {
-    console.error(`SSH Error: ${data}`);
-  });
-
-  ssh.on('close', (code) => {
-    console.log(`SSH Tunnel closed with code ${code}`);
-    if (code === 255) {
-        console.log('Pinggy failed (likely authentication). Trying Serveo fallback...');
-        startServeoFallback();
-    }
-  });
-}
-
-function startServeoFallback() {
-    console.log('Starting Serveo SSH Tunnel...');
-    const ssh = spawn('ssh', [
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'BatchMode=yes',
-        '-R', `80:localhost:${PORT}`,
-        'serveo.net'
-    ]);
-
-    ssh.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('Serveo Output:', output);
-        const match = output.match(/https:\/\/[a-z0-9-]+\.serveo\.net/);
-        if (match) {
-            tunnelUrl = match[0];
-            shortCode = generateShortCode();
-            codeMap.set(shortCode, tunnelUrl);
-            console.log(`\n🚀 SERVEO TUNNEL ACTIVE: ${tunnelUrl}\n`);
-        }
+    tunnel.on('close', () => {
+      console.log('Tunnel closed');
     });
+  } catch (err) {
+    console.error('Error starting localtunnel:', err);
+  }
 }
 
-// Cloudflare API integration (Placeholder)
+// Cloudflare API integration
 async function updateCloudflareDNS(domain, tunnelUrl) {
     const CF_API_TOKEN = process.env.CF_API_TOKEN;
     const CF_ZONE_ID = process.env.CF_ZONE_ID;
@@ -107,7 +65,6 @@ async function updateCloudflareDNS(domain, tunnelUrl) {
     try {
         console.log(`Updating Cloudflare DNS for ${domain} to point to ${tunnelUrl}`);
 
-        // 1. Get Record ID for the domain
         const recordsRes = await axios.get(
             `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${domain}`,
             { headers: { 'Authorization': `Bearer ${CF_API_TOKEN}` } }
@@ -117,14 +74,12 @@ async function updateCloudflareDNS(domain, tunnelUrl) {
         const tunnelHostname = new URL(tunnelUrl).hostname;
 
         if (record) {
-            // Update existing record
             await axios.put(
                 `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${record.id}`,
                 { type: 'CNAME', name: domain, content: tunnelHostname, proxied: true },
                 { headers: { 'Authorization': `Bearer ${CF_API_TOKEN}` } }
             );
         } else {
-            // Create new record
             await axios.post(
                 `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records`,
                 { type: 'CNAME', name: domain, content: tunnelHostname, proxied: true },
@@ -185,6 +140,10 @@ io.on('connection', (socket) => {
     console.log(`${name} (${uuid}) joined`);
   });
 
+  socket.on('media-sync', (data) => {
+    socket.broadcast.emit('media-sync', data);
+  });
+
   socket.on('group-message', (msg) => {
     const messageData = { ...msg, from: socket.name, fromUuid: socket.uuid, timestamp: Date.now() };
     io.emit('group-message', messageData);
@@ -194,10 +153,6 @@ io.on('connection', (socket) => {
         session.missedMessages.push(messageData);
       }
     });
-  });
-
-  socket.on('media-sync', (data) => {
-    socket.broadcast.emit('media-sync', data);
   });
 
   socket.on('private-message', ({ toUuid, text }) => {
