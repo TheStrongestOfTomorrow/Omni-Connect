@@ -35,8 +35,14 @@ function generateShortCode() {
 
 async function startTunnel() {
   console.log('Starting Pinggy SSH Tunnel...');
-  // ssh -p 443 -R0:localhost:8080 a.pinggy.io
-  const ssh = spawn('ssh', ['-o', 'StrictHostKeyChecking=no', '-p', '443', '-R0:localhost:' + PORT, 'a.pinggy.io']);
+  // BatchMode=yes prevents password prompts, -T disables pseudo-terminal
+  const ssh = spawn('ssh', [
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'BatchMode=yes',
+    '-p', '443',
+    '-R0:localhost:' + PORT,
+    'a.pinggy.io'
+  ]);
 
   ssh.stdout.on('data', (data) => {
     const output = data.toString();
@@ -59,7 +65,33 @@ async function startTunnel() {
 
   ssh.on('close', (code) => {
     console.log(`SSH Tunnel closed with code ${code}`);
+    if (code === 255) {
+        console.log('Pinggy failed (likely authentication). Trying Serveo fallback...');
+        startServeoFallback();
+    }
   });
+}
+
+function startServeoFallback() {
+    console.log('Starting Serveo SSH Tunnel...');
+    const ssh = spawn('ssh', [
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'BatchMode=yes',
+        '-R', `80:localhost:${PORT}`,
+        'serveo.net'
+    ]);
+
+    ssh.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('Serveo Output:', output);
+        const match = output.match(/https:\/\/[a-z0-9-]+\.serveo\.net/);
+        if (match) {
+            tunnelUrl = match[0];
+            shortCode = generateShortCode();
+            codeMap.set(shortCode, tunnelUrl);
+            console.log(`\n🚀 SERVEO TUNNEL ACTIVE: ${tunnelUrl}\n`);
+        }
+    });
 }
 
 // Cloudflare API integration (Placeholder)
